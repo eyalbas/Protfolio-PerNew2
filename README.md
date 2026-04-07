@@ -40,3 +40,15 @@ This package already includes your Firebase web config in index.html. You still 
 
 ## Fix included
 This version fixes quote refresh when the same symbol exists in multiple brokers. The refresh step now updates all matching holdings instead of only the first match.
+
+
+## UI change
+This version removes the Load demo button and demo-data insertion logic from the interface.
+
+
+## Header text change
+This version replaces the technical Firebase subtitle with a simpler portfolio subtitle in the page header.
+
+
+## Broker color fix
+This version adds deterministic broker colors based on broker name so brokers such as IBKR and Blink render with stable distinct accent colors.
