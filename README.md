@@ -36,3 +36,7 @@
 
 ## Your Firebase config
 This package already includes your Firebase web config in index.html. You still need to enable Email/Password in Firebase Authentication and publish the Firestore rules before sign-in and sync will work.
+
+
+## Fix included
+This version fixes quote refresh when the same symbol exists in multiple brokers. The refresh step now updates all matching holdings instead of only the first match.

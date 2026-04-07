@@ -164,10 +164,12 @@
         if (!response.ok) throw new Error(data.error || 'Quote request failed');
         let okCount = 0;
         await Promise.all(data.results.map(async result => {
-          const holding = holdings.find(h => h.symbol === result.symbol && h.exchange === result.exchange);
-          if (!holding || !result.ok) return;
-          await setDoc(doc(db, 'users', currentUser.uid, 'holdings', holding.id), { ...holding, currentPrice: result.currentPrice, previousClose: result.previousClose ?? result.currentPrice, timestamp: result.timestamp || null, currency: holding.currency || result.currency }, { merge: true });
-          okCount += 1;
+          if (!result.ok) return;
+          const matchingHoldings = holdings.filter(h => h.symbol === result.symbol && h.exchange === result.exchange);
+          await Promise.all(matchingHoldings.map(async holding => {
+            await setDoc(doc(db, 'users', currentUser.uid, 'holdings', holding.id), { ...holding, currentPrice: result.currentPrice, previousClose: result.previousClose ?? result.currentPrice, timestamp: result.timestamp || null, currency: holding.currency || result.currency }, { merge: true });
+            okCount += 1;
+          }));
         }));
         if (data.fx && data.fx.rate) els.usdIls.value = Number(data.fx.rate).toFixed(4);
         const failures = data.results.filter(r => !r.ok);
