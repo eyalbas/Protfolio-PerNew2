@@ -52,7 +52,7 @@
         <p class="helper" style="margin:.5rem 0 1rem">You must paste your Firebase web config into the file before deploy, create a Firestore database, and enable Email/Password authentication. Firestore’s quickstart explains creating the database and initializing the web SDK. [web:376][web:378]</p>
         <form id="holdingForm">
           <div class="form-grid">
-            <div class="field full"><label for="apiKey">Yahoo Finance (free)</label><input id="apiKey" placeholder="Paste your Yahoo Finance (free)" required></div>
+            <div class="field full"><label for="apiKey">EODHD API key</label><input id="apiKey" placeholder="Paste your EODHD API key" required></div>
             <div class="field"><label for="broker">Broker</label><input id="broker" required></div>
             <div class="field"><label for="symbol">Symbol</label><input id="symbol" placeholder="AAPL, MU, TASE" required></div>
             <div class="field"><label for="exchange">Exchange</label><select id="exchange"><option value="NASDAQ">NASDAQ</option><option value="TASE">TASE</option></select></div>
@@ -73,7 +73,7 @@
           <article class="card"><div class="eyebrow">Positions</div><div class="metric" id="positionsCount">0</div><div class="muted" id="brokersCount">0 brokers</div></article>
         </div>
         <section class="card"><div class="toolbar"><div><h2 class="section-title">Broker split</h2><p class="note">Values are normalized to ILS for totals and grouped by broker. TASE prices are converted from agorot to shekels by dividing by 100.</p></div><span class="chip">Cloud Firestore sync</span></div><div class="split-grid" id="brokerCards"></div></section>
-        <section class="card"><div class="toolbar"><div><h2 class="section-title">Holdings</h2><p class="note">Delete rows directly in the table. Holdings are stored per signed-in user in Firestore.</p></div></div><div class="holdings-wrap"><table><thead><tr><th>Broker</th><th>Symbol</th><th>Exchange</th><th>Buy price</th><th>Current price</th><th>Qty</th><th>Day change</th><th>Gain</th><th>Total value</th><th>API symbol</th><th>Action</th></tr></thead><tbody id="holdingsBody"></tbody></table></div></section>
+        <section class="card"><div class="toolbar"><div><h2 class="section-title">Holdings</h2><p class="note">Delete rows directly in the table. Holdings are stored per signed-in user in Firestore.</p></div></div><div class="holdings-wrap"><table><thead><tr><th data-sort="broker" style="cursor:pointer">Broker</th><th data-sort="symbol" style="cursor:pointer">Symbol</th><th data-sort="exchange" style="cursor:pointer">Exchange</th><th data-sort="buyPrice" style="cursor:pointer">Buy price</th><th data-sort="currentPrice" style="cursor:pointer">Current price</th><th data-sort="quantity" style="cursor:pointer">Qty</th><th data-sort="day" style="cursor:pointer">Day change</th><th data-sort="gain" style="cursor:pointer">Gain</th><th data-sort="value" style="cursor:pointer">Total value <span id="sort-indicator">↓</span></th><th>API symbol</th><th>Action</th></tr></thead><tbody id="holdingsBody"></tbody></table></div></section>
       </section>
     </main>
   </div>
@@ -162,7 +162,7 @@
     els.refreshBtn.addEventListener('click', async () => {
       if (!currentUser) { els.status.textContent = 'Sign in first.'; return; }
       if (!holdings.length) { els.status.textContent = 'Add at least one holding first.'; return; }
-      if (!els.apiKey.value.trim()) { els.status.textContent = 'Enter your Yahoo Finance (free) first.'; return; }
+      if (!els.apiKey.value.trim()) { els.status.textContent = 'Enter your EODHD API key first.'; return; }
       els.status.textContent = 'Refreshing quotes via Netlify function...';
       try {
         const response = await fetch('/.netlify/functions/quotes', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ apiKey: els.apiKey.value.trim(), items: holdings.map(h => ({ symbol:h.symbol, exchange:h.exchange })) }) });
@@ -180,7 +180,7 @@
         if (data.fx && data.fx.rate) els.usdIls.value = Number(data.fx.rate).toFixed(4);
         const failures = data.results.filter(r => !r.ok);
         const fxText = data.fx && data.fx.rate ? ` USD/ILS: ${Number(data.fx.rate).toFixed(4)}.` : data.fx && data.fx.error ? ` USD/ILS failed: ${data.fx.error}.` : '';
-        els.status.textContent = failures.length ? `Refreshed ${okCount} holding(s). Failed: ${failures.map(f => `${f.symbol} as ${f.eodhdSymbol} (${f.error})`).join('; ')}.${fxText}` : `Refreshed ${okCount} holding(s) from Yahoo.${fxText}`;
+        els.status.textContent = failures.length ? `Refreshed ${okCount} holding(s). Failed: ${failures.map(f => `${f.symbol} as ${f.eodhdSymbol} (${f.error})`).join('; ')}.${fxText}` : `Refreshed ${okCount} holding(s) from EODHD.${fxText}`;
       } catch (error) {
         els.status.textContent = `Refresh failed: ${error.message}`;
       }
