@@ -1,67 +1,92 @@
+
+// ⚠️ INVESTING.COM SCRAPER - RISKY & FRAGILE ⚠️
+// - Violates terms of service [https://www.investing.com]
+// - Breaks when site changes HTML
+// - Gets blocked by anti-bot measures
+// USE AT YOUR OWN RISK - PAID APIs RECOMMENDED
+
 export async function handler(event) {
-  if (event.httpMethod === 'OPTIONS') return json({}, 200);
+  if (event.httpMethod === "OPTIONS") return json({}, 200);
+
   try {
-    const body = JSON.parse(event.body || '{}');
-    const apiKey = String(body.apiKey || '').trim();
+    const body = JSON.parse(event.body || "{}");
     const items = Array.isArray(body.items) ? body.items : [];
-    if (!apiKey) return json({ error: 'Missing Twelve Data API key' }, 400);
 
-    async function fetchJson(url) {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (data && data.status === 'error') throw new Error(data.message || 'API error');
-      return data;
-    }
+    async function scrapeSymbol(symbol, exchange) {
+      let url;
+      if (exchange.toUpperCase() === "TASE") {
+        url = `https://www.investing.com/equities/${symbol.toLowerCase()}`;
+      } else {
+        url = `https://www.investing.com/equities/${symbol.toLowerCase()}`;
+      }
 
-    function securityType(exchange) {
-      return String(exchange || '').toUpperCase() === 'TASE' ? 'TASE' : 'NASDAQ';
-    }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
 
-    function symbolFor(exchange, symbol) {
-      return `${String(symbol || '').trim().toUpperCase()}:${securityType(exchange)}`;
-    }
+      const headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+      };
 
-    async function quote(exchange, symbol) {
-      const full = symbolFor(exchange, symbol);
-      const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(full)}&apikey=${encodeURIComponent(apiKey)}`;
-      const data = await fetchJson(url);
-      const currentPrice = Number(data.close ?? data.price ?? 0);
-      const previousClose = Number(data.previous_close ?? 0);
-      const currency = String(data.currency || (String(exchange).toUpperCase() === 'TASE' ? 'ILS' : 'USD')).toUpperCase();
-      if (!currentPrice) throw new Error('No current price returned');
-      return { ok: true, symbol, exchange, quoteSymbol: full, currentPrice, previousClose: previousClose || currentPrice, currency, timestamp: data.timestamp || null };
-    }
-
-    async function usdIls() {
-      const direct = 'USD/ILS';
       try {
-        const data = await fetchJson(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(direct)}&apikey=${encodeURIComponent(apiKey)}`);
-        const rate = Number(data.close ?? data.price ?? 0);
-        if (!rate) throw new Error('No USD/ILS rate returned');
-        return { symbol: direct, rate, timestamp: data.timestamp || null };
-      } catch (err) {
-        const inverse = 'ILS/USD';
-        const data = await fetchJson(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(inverse)}&apikey=${encodeURIComponent(apiKey)}`);
-        const inverseRate = Number(data.close ?? data.price ?? 0);
-        if (!inverseRate) throw new Error('No USD/ILS rate returned');
-        return { symbol: inverse, rate: 1 / inverseRate, timestamp: data.timestamp || null, inverted: true };
+        const resp = await fetch(url, { 
+          headers, 
+          signal: controller.signal 
+        });
+        clearTimeout(timeout);
+
+        if (!resp.ok) {
+          return { ok: false, symbol, exchange, error: `HTTP ${resp.status}` };
+        }
+
+        const html = await resp.text();
+        // Try multiple selectors - fragile!
+        const priceMatch = html.match(/["']lastPrice["'][:\s]*([0-9,.-]+)/) ||
+                          html.match(/class=['"]text-2xl['"].*?([0-9,.-]+)/) ||
+                          html.match(/data-test=['"]instrument-header-price['"].*?([0-9,.-]+)/);
+
+        if (!priceMatch) {
+          return { ok: false, symbol, exchange, error: "No price found" };
+        }
+
+        const priceText = priceMatch[1].replace(/,/g, "");
+        const currentPrice = parseFloat(priceText);
+        const currency = exchange.toUpperCase() === "TASE" ? "ILS" : "USD";
+
+        await new Promise(r => setTimeout(r, 2000)); // Rate limit
+
+        return {
+          ok: true,
+          symbol, exchange,
+          currentPrice, 
+          previousClose: currentPrice, // Fallback
+          currency
+        };
+      } catch (e) {
+        clearTimeout(timeout);
+        return { ok: false, symbol, exchange, error: e.message };
       }
     }
 
-    const results = await Promise.all(items.map(async item => {
-      try {
-        return await quote(item.exchange, item.symbol);
-      } catch (error) {
-        return { ok: false, symbol: item.symbol, exchange: item.exchange, quoteSymbol: symbolFor(item.exchange, item.symbol), error: error.message };
-      }
-    }));
+    const results = await Promise.all(
+      items.map(item => scrapeSymbol(item.symbol, item.exchange))
+    );
 
+    // USDILS
     let fx;
-    try { fx = await usdIls(); } catch (error) { fx = { error: error.message }; }
+    try {
+      fx = await scrapeSymbol("USDILS", "FOREX");
+    } catch (e) {
+      fx = { error: e.message };
+    }
+
     return json({ results, fx });
   } catch (error) {
-    return json({ error: error.message || 'Unexpected error' }, 500);
+    return json({ error: error.message }, 500);
   }
 }
 
@@ -69,10 +94,10 @@ function json(body, status = 200) {
   return {
     statusCode: status,
     headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS'
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS"
     },
     body: JSON.stringify(body)
   };
