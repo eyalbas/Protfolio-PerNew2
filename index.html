@@ -52,7 +52,120 @@
         <p class="helper" style="margin:.5rem 0 1rem">You must paste your Firebase web config into the file before deploy, create a Firestore database, and enable Email/Password authentication. Firestore’s quickstart explains creating the database and initializing the web SDK. [web:376][web:378]</p>
         <form id="holdingForm">
           <div class="form-grid">
-            <div class="field full"><label for="apiKey">('/.netlify/functions/quotes', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ apiKey: els.apiKey.value.trim(), items: holdings.map(h => ({ symbol:h.symbol, exchange:h.exchange })) }) });
+            <div class="field full"><label for="apiKey">Yahoo Finance (free)</label><input id="apiKey" placeholder="Paste your Yahoo Finance (free)" required></div>
+            <div class="field"><label for="broker">Broker</label><input id="broker" required></div>
+            <div class="field"><label for="symbol">Symbol</label><input id="symbol" placeholder="AAPL, MU, TASE" required></div>
+            <div class="field"><label for="exchange">Exchange</label><select id="exchange"><option value="NASDAQ">NASDAQ</option><option value="TASE">TASE</option></select></div>
+            <div class="field"><label for="quantity">Number of shares</label><input id="quantity" type="number" min="0" step="0.0001" required></div>
+            <div class="field"><label for="buyPrice">Buy price</label><input id="buyPrice" type="number" min="0" step="0.0001" required></div>
+            <div class="field"><label for="currency">Currency override</label><select id="currency"><option value="AUTO">Auto from API</option><option value="USD">USD</option><option value="ILS">ILS</option></select></div>
+            <div class="field full"><label for="usdIls">USD to ILS rate</label><input id="usdIls" type="number" min="0" step="0.0001" value="3.7000" readonly></div>
+          </div>
+          <div class="row-actions" style="margin-top:1rem"><button class="btn btn-primary" type="submit">Add holding</button><button class="btn" type="button" id="clearBtn">Clear all</button></div>
+        </form>
+      </aside>
+      <section class="stack">
+        <div id="status" class="status">Ready. Configure Firebase, sign in, and your holdings will sync through Firestore.</div>
+        <div class="kpi-grid">
+          <article class="card"><div class="eyebrow">Total portfolio</div><div class="metric" id="totalValue">₪0.00</div><div class="muted">Base currency: ILS</div></article>
+          <article class="card"><div class="eyebrow">Day change</div><div class="metric" id="dayChange">₪0.00</div><div class="muted" id="dayPct">0.00%</div></article>
+          <article class="card"><div class="eyebrow">Total gain / loss</div><div class="metric" id="gainValue">₪0.00</div><div class="muted" id="gainPct">0.00%</div></article>
+          <article class="card"><div class="eyebrow">Positions</div><div class="metric" id="positionsCount">0</div><div class="muted" id="brokersCount">0 brokers</div></article>
+        </div>
+        <section class="card"><div class="toolbar"><div><h2 class="section-title">Broker split</h2><p class="note">Values are normalized to ILS for totals and grouped by broker. TASE prices are converted from agorot to shekels by dividing by 100.</p></div><span class="chip">Cloud Firestore sync</span></div><div class="split-grid" id="brokerCards"></div></section>
+        <section class="card"><div class="toolbar"><div><h2 class="section-title">Holdings</h2><p class="note">Delete rows directly in the table. Holdings are stored per signed-in user in Firestore.</p></div></div><div class="holdings-wrap"><table><thead><tr><th>Broker</th><th>Symbol</th><th>Exchange</th><th>Buy price</th><th>Current price</th><th>Qty</th><th>Day change</th><th>Gain</th><th>Total value</th><th>API symbol</th><th>Action</th></tr></thead><tbody id="holdingsBody"></tbody></table></div></section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+    import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, getDocs } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+    const firebaseConfig = {
+      apiKey: 'AIzaSyDojG-2UZ8ZRA_J-LZfUdhcwN1uYgdeKQc',
+      authDomain: 'protfolionetfly.firebaseapp.com',
+      projectId: 'protfolionetfly',
+      storageBucket: 'protfolionetfly.firebasestorage.app',
+      messagingSenderId: '825758904364',
+      appId: '1:825758904364:web:61350264c94d4d31e96189'
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const holdings = [];
+    let currentUser = null;
+
+    const $ = id => document.getElementById(id);
+    const els = { form:$('holdingForm'), apiKey:$('apiKey'), status:$('status'), body:$('holdingsBody'), brokerCards:$('brokerCards'), totalValue:$('totalValue'), dayChange:$('dayChange'), dayPct:$('dayPct'), gainValue:$('gainValue'), gainPct:$('gainPct'), positionsCount:$('positionsCount'), brokersCount:$('brokersCount'), refreshBtn:$('refreshBtn'), clearBtn:$('clearBtn'), usdIls:$('usdIls'), themeToggle:$('themeToggle'), email:$('email'), password:$('password'), signInBtn:$('signInBtn'), signUpBtn:$('signUpBtn'), signOutBtn:$('signOutBtn'), authState:$('authState') };
+    const fxRate = () => Number(els.usdIls.value || 3.7);
+    const money = (v,c='ILS') => new Intl.NumberFormat('en-US',{style:'currency',currency:c,maximumFractionDigits:2}).format(v || 0);
+    const pct = v => `${(v || 0).toFixed(2)}%`;
+    const cls = v => v > 0 ? 'positive' : v < 0 ? 'negative' : 'neutral';
+    const rate = c => c === 'USD' ? fxRate() : 1;
+    const eodhdSymbol = (symbol, exchange) => `${String(symbol).trim().toUpperCase()}.${exchange === 'TASE' ? 'TA' : 'US'}`;
+    const priceFactor = h => h.exchange === 'TASE' ? 0.01 : 1;
+    function brokerColor(name){
+      let hash = 0;
+      for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        hash |= 0;
+      }
+      const hue = Math.abs(hash) % 360;
+      return `hsl(${hue} 58% 46%)`;
+    }
+
+    function theme(mode){document.documentElement.setAttribute('data-theme',mode);els.themeToggle.innerHTML=mode==='dark'?'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>':'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'}
+    theme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    els.themeToggle.addEventListener('click',()=>theme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'));
+
+    function compute(h){const r=rate(h.currency);const pf=priceFactor(h);const cost=h.buyPrice*pf*h.quantity*r;const value=(h.currentPrice||0)*pf*h.quantity*r;const prev=(h.previousClose||0)*pf*h.quantity*r;const day=value-prev;const gain=value-cost;return {...h,cost,value,prev,day,gain,dayPct:prev?day/prev*100:0,gainPct:cost?gain/cost*100:0,displayBuyPrice:h.buyPrice*pf,displayCurrentPrice:(h.currentPrice||0)*pf,displayPrevPrice:(h.previousClose||0)*pf};}
+    function render(){const rows=holdings.map(compute);const totalValue=rows.reduce((a,b)=>a+b.value,0);const totalCost=rows.reduce((a,b)=>a+b.cost,0);const totalPrev=rows.reduce((a,b)=>a+b.prev,0);const totalDay=rows.reduce((a,b)=>a+b.day,0);const totalGain=rows.reduce((a,b)=>a+b.gain,0);const brokers=[...new Set(rows.map(r=>r.broker))];els.totalValue.textContent=money(totalValue);els.dayChange.textContent=money(totalDay);els.dayChange.className=`metric ${cls(totalDay)}`;els.dayPct.textContent=pct(totalPrev?totalDay/totalPrev*100:0);els.dayPct.className=cls(totalDay);els.gainValue.textContent=money(totalGain);els.gainValue.className=`metric ${cls(totalGain)}`;els.gainPct.textContent=pct(totalCost?totalGain/totalCost*100:0);els.gainPct.className=cls(totalGain);els.positionsCount.textContent=rows.length;els.brokersCount.textContent=`${brokers.length} broker${brokers.length===1?'':'s'}`;if(!rows.length){els.body.innerHTML='<tr><td colspan="11" class="empty">No holdings yet.</td></tr>';els.brokerCards.innerHTML='<div class="empty">Broker split appears here.</div>';return;}els.body.innerHTML=rows.map(h=>`<tr><td>${h.broker}</td><td><strong>${h.symbol}</strong><div class="muted">${h.currency}</div></td><td>${h.exchange}</td><td>${money(h.displayBuyPrice,h.currency)}</td><td>${h.currentPrice?money(h.displayCurrentPrice,h.currency):'—'}<div class="muted">Prev: ${h.previousClose?money(h.displayPrevPrice,h.currency):'—'}</div></td><td>${h.quantity}</td><td class="${cls(h.day)}">${money(h.day)}<div>${pct(h.dayPct)}</div></td><td class="${cls(h.gain)}">${money(h.gain)}<div>${pct(h.gainPct)}</div></td><td>${money(h.value)}</td><td><code>${eodhdSymbol(h.symbol,h.exchange)}</code></td><td><button type="button" class="btn" data-delete-id="${h.id}" aria-label="Delete holding ${h.symbol} from ${h.broker}" style="min-height:36px;padding:0 .75rem;color:var(--color-error);border-color:color-mix(in oklab,var(--color-error) 20%,transparent)">Delete</button></td></tr>`).join('');const grouped={};rows.forEach(h=>{grouped[h.broker] ||= {broker:h.broker,value:0,cost:0,prev:0,day:0,gain:0,positions:0};grouped[h.broker].value+=h.value;grouped[h.broker].cost+=h.cost;grouped[h.broker].prev+=h.prev;grouped[h.broker].day+=h.day;grouped[h.broker].gain+=h.gain;grouped[h.broker].positions+=1;});els.brokerCards.innerHTML=Object.values(grouped).map(b=>{const color=brokerColor(b.broker);return `<article class="broker-card" style="border-top:4px solid ${color}"><div class="eyebrow" style="color:${color}">${b.broker}</div><div class="metric" style="font-size:1.55rem;margin-top:.75rem">${money(b.value)}</div><div class="muted" style="margin-top:.4rem">${b.positions} position${b.positions===1?'':'s'}</div><div class="${cls(b.day)}" style="margin-top:1rem">Day: ${money(b.day)} · ${pct(b.prev?b.day/b.prev*100:0)}</div><div class="${cls(b.gain)}" style="margin-top:.35rem">Gain: ${money(b.gain)} · ${pct(b.cost?b.gain/b.cost*100:0)}</div></article>`}).join('');}
+
+    function userHoldingsRef(){ return collection(db, 'users', currentUser.uid, 'holdings'); }
+    async function addHoldingToDb(holding){ await addDoc(userHoldingsRef(), holding); }
+    async function deleteHoldingFromDb(id){ await deleteDoc(doc(db, 'users', currentUser.uid, 'holdings', id)); }
+    async function clearAllHoldings(){ const snap = await getDocs(userHoldingsRef()); await Promise.all(snap.docs.map(d => deleteDoc(d.ref))); }
+    function watchHoldings(){ return onSnapshot(userHoldingsRef(), snap => { holdings.length = 0; snap.forEach(docSnap => holdings.push({ id: docSnap.id, ...docSnap.data() })); render(); }); }
+    let unsubscribe = null;
+
+    els.signUpBtn.addEventListener('click', async ()=>{ try { await createUserWithEmailAndPassword(auth, els.email.value.trim(), els.password.value); els.status.textContent='Account created.'; } catch(e){ els.status.textContent=`Sign-up failed: ${e.message}`; } });
+    els.signInBtn.addEventListener('click', async ()=>{ try { await signInWithEmailAndPassword(auth, els.email.value.trim(), els.password.value); els.status.textContent='Signed in.'; } catch(e){ els.status.textContent=`Sign-in failed: ${e.message}`; } });
+    els.signOutBtn.addEventListener('click', async ()=>{ await signOut(auth); });
+
+    onAuthStateChanged(auth, user => {
+      currentUser = user;
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+      if (user) {
+        els.authState.textContent = `Signed in as ${user.email}`;
+        unsubscribe = watchHoldings();
+      } else {
+        els.authState.textContent = 'Not signed in.';
+        holdings.length = 0;
+        render();
+      }
+    });
+
+    els.form.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (!currentUser) { els.status.textContent = 'Sign in first.'; return; }
+      const exchange=$('exchange').value; const currencyChoice=$('currency').value;
+      await addHoldingToDb({ broker:$('broker').value.trim(), symbol:$('symbol').value.trim().toUpperCase(), exchange, quantity:Number($('quantity').value), buyPrice:Number($('buyPrice').value), currency:currencyChoice === 'AUTO' ? (exchange === 'TASE' ? 'ILS' : 'USD') : currencyChoice, currentPrice:null, previousClose:null, timestamp:null });
+      $('broker').value=''; $('symbol').value=''; $('quantity').value=''; $('buyPrice').value=''; $('exchange').value='NASDAQ'; $('currency').value='AUTO';
+      els.status.textContent='Holding added and saved to Firestore.';
+    });
+
+    els.clearBtn.addEventListener('click', async ()=>{ if (!currentUser) return; await clearAllHoldings(); els.status.textContent='All holdings cleared.'; });
+    els.refreshBtn.addEventListener('click', async () => {
+      if (!currentUser) { els.status.textContent = 'Sign in first.'; return; }
+      if (!holdings.length) { els.status.textContent = 'Add at least one holding first.'; return; }
+      if (!els.apiKey.value.trim()) { els.status.textContent = 'Enter your Yahoo Finance (free) first.'; return; }
+      els.status.textContent = 'Refreshing quotes via Netlify function...';
+      try {
+        const response = await fetch('/.netlify/functions/quotes', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ apiKey: els.apiKey.value.trim(), items: holdings.map(h => ({ symbol:h.symbol, exchange:h.exchange })) }) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Quote request failed');
         let okCount = 0;
@@ -67,7 +180,7 @@
         if (data.fx && data.fx.rate) els.usdIls.value = Number(data.fx.rate).toFixed(4);
         const failures = data.results.filter(r => !r.ok);
         const fxText = data.fx && data.fx.rate ? ` USD/ILS: ${Number(data.fx.rate).toFixed(4)}.` : data.fx && data.fx.error ? ` USD/ILS failed: ${data.fx.error}.` : '';
-        els.status.textContent = failures.length ? `Refreshed ${okCount} holding(s). Failed: ${failures.map(f => `${f.symbol} as ${f.eodhdSymbol} (${f.error})`).join('; ')}.${fxText}` : `Refreshed ${okCount} holding(s) from EODHD.${fxText}`;
+        els.status.textContent = failures.length ? `Refreshed ${okCount} holding(s). Failed: ${failures.map(f => `${f.symbol} as ${f.eodhdSymbol} (${f.error})`).join('; ')}.${fxText}` : `Refreshed ${okCount} holding(s) from Yahoo.${fxText}`;
       } catch (error) {
         els.status.textContent = `Refresh failed: ${error.message}`;
       }
@@ -75,29 +188,6 @@
 
     els.body.addEventListener('click', async event => { const btn = event.target.closest('[data-delete-id]'); if (!btn || !currentUser) return; await deleteHoldingFromDb(btn.dataset.deleteId); els.status.textContent='Holding deleted.'; });
     render();
-  
-// 🔥 BULLETPROOF SORT - runs LAST
-document.addEventListener("DOMContentLoaded", function() {
-  setTimeout(() => {
-    const headers = document.querySelectorAll("th[data-sort]");
-    headers.forEach(th => {
-      th.onclick = function() {
-        console.log("🔥 SORT CLICKED:", th.dataset.sort);
-
-        // Toggle sort direction
-        const dir = th.dataset.sort === sortCol ? -sortDir : -1;
-        sortCol = th.dataset.sort;
-        sortDir = dir;
-
-        document.querySelector("#sort-indicator").textContent = sortDir === -1 ? "↓" : "↑";
-        render(); // Your existing render
-      };
-    });
-    console.log("🔥 SORT ATTACHED to", headers.length, "headers");
-  }, 2000); // Wait for Firebase load
-});
-let sortCol = "value", sortDir = -1;
-
-</script>
+  </script>
 </body>
 </html>
