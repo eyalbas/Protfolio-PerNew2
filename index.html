@@ -162,7 +162,7 @@
     els.refreshBtn.addEventListener('click', async () => {
       if (!currentUser) { els.status.textContent = 'Sign in first.'; return; }
       if (!holdings.length) { els.status.textContent = 'Add at least one holding first.'; return; }
-      if (!els.apiKey.value.trim()) { els.status.textContent = 'Enter your EODHD API key first.'; return; }
+      if (!els.apiKey.value.trim()) { els.status.textContent = 'Enter your Investing.com Scraper first.'; return; }
       els.status.textContent = 'Refreshing quotes via Netlify function...';
       try {
         const response = await fetch('/.netlify/functions/quotes', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ apiKey: els.apiKey.value.trim(), items: holdings.map(h => ({ symbol:h.symbol, exchange:h.exchange })) }) });
