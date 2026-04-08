@@ -53,6 +53,9 @@ This version replaces the technical Firebase subtitle with a simpler portfolio s
 ## Broker color fix
 This version adds deterministic broker colors based on broker name so brokers such as IBKR and Blink render with stable distinct accent colors.
 
-
-## Twelve Data test version
-This version swaps the Netlify quote function from EODHD to Twelve Data for initial portfolio refresh testing, including a USD/ILS fallback that inverts ILS/USD when needed.
+## ⚠️ INVESTING.COM SCRAPER VERSION ⚠️
+- **Violates terms** - https://www.investing.com
+- **Breaks frequently** - HTML changes crash it
+- **Slow** - 2s delays between requests
+- **~70% success rate** expected
+- PAID APIs RECOMMENDED
