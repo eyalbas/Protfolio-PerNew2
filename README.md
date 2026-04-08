@@ -52,3 +52,7 @@ This version replaces the technical Firebase subtitle with a simpler portfolio s
 
 ## Broker color fix
 This version adds deterministic broker colors based on broker name so brokers such as IBKR and Blink render with stable distinct accent colors.
+
+
+## Twelve Data test version
+This version swaps the Netlify quote function from EODHD to Twelve Data for initial portfolio refresh testing, including a USD/ILS fallback that inverts ILS/USD when needed.
